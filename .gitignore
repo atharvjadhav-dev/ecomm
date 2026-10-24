@@ -58,3 +58,7 @@ yarn-error.log*
 ehthumbs.db
 Thumbs.db
 **/.DS_Store
+
+# Kubernetes secret manifests (keep .example.yaml templates)
+k8s/*secret*.yaml
+!k8s/*.example.yaml

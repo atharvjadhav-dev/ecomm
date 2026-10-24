@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: ecomm
+  labels:
+    app: backend
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: medusa-ecommerce
+spec:
+  type: NodePort
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      nodePort: 30090
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: ecomm
+  labels:
+    app: backend
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: medusa-ecommerce
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: medusa-ecommerce
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_DB
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL at postgres:5432..."
+              until pg_isready -h postgres -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                sleep 2
+              done
+              echo "PostgreSQL is ready."
+        - name: wait-for-redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Redis at redis:6379..."
+              until redis-cli -h redis -p 6379 ping | grep -q PONG; do
+                sleep 2
+              done
+              echo "Redis is ready."
+      containers:
+        - name: backend
+          image: ecomm-phase2-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9000
+              name: http
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: NODE_ENV
+            - name: PORT
+              value: "9000"
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: POSTGRES_DB
+            - name: DATABASE_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: DATABASE_SSL
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: REDIS_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets
+                  key: JWT_SECRET
+            - name: COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets
+                  key: COOKIE_SECRET
+            - name: COOKIE_SECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: COOKIE_SECURE
+            - name: STORE_CORS
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: STORE_CORS
+            - name: ADMIN_CORS
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: ADMIN_CORS
+            - name: AUTH_CORS
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config
+                  key: AUTH_CORS
+            - name: STOREFRONT_PUBLISHABLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets
+                  key: STOREFRONT_PUBLISHABLE_KEY
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecomm-config
+  namespace: ecomm
+  labels:
+    app.kubernetes.io/part-of: medusa-ecommerce
+data:
+  NODE_ENV: "production"
+  POSTGRES_USER: "postgres"
+  POSTGRES_DB: "medusa_db"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  DATABASE_SSL: "false"
+  REDIS_URL: "redis://redis:6379"
+  # Local HTTP cluster testing uses false; set to "true" behind HTTPS Ingress in production
+  COOKIE_SECURE: "false"
+  STORE_CORS: "http://localhost:8000,http://localhost:8001,http://localhost:30080,http://127.0.0.1:8000,http://127.0.0.1:8001,http://127.0.0.1:30080,http://storefront:8000"
+  ADMIN_CORS: "http://localhost:5173,http://localhost:9000,http://localhost:9001,http://localhost:30090,http://127.0.0.1:9000,http://127.0.0.1:9001,http://127.0.0.1:30090"
+  AUTH_CORS: "http://localhost:5173,http://localhost:9000,http://localhost:9001,http://localhost:30090,http://localhost:8000,http://localhost:8001,http://localhost:30080,http://127.0.0.1:9000,http://127.0.0.1:30090,http://127.0.0.1:8000,http://127.0.0.1:30080,http://storefront:8000"
+  # Internal Kubernetes service DNS used by Next.js SSR, Server Actions, and Middleware
+  MEDUSA_BACKEND_URL: "http://backend:9000"
+  # Browser-facing URLs (compatible with port-forward on 9000/8000 or NodePort on 30090/30080)
+  NEXT_PUBLIC_MEDUSA_BACKEND_URL: "http://localhost:9000"
+  NEXT_PUBLIC_BASE_URL: "http://localhost:8000"
+  NEXT_PUBLIC_DEFAULT_REGION: "dk"
