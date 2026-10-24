@@ -1,4 +1,4 @@
-"use server"
+﻿"use server"
 
 import { sdk } from "@lib/config"
 import medusaError from "@lib/util/medusa-error"
@@ -278,107 +278,91 @@ export async function applyPromotions(codes: string[]) {
     .catch(medusaError)
 }
 
-export async function applyGiftCard(code: string) {
-  //   const cartId = getCartId()
-  //   if (!cartId) return "No cartId cookie found"
-  //   try {
-  //     await updateCart(cartId, { gift_cards: [{ code }] }).then(() => {
-  //       revalidateTag("cart")
-  //     })
-  //   } catch (error: any) {
-  //     throw error
-  //   }
+/**
+ * In Medusa v2, promotions and discounts are managed via promo codes using `applyPromotions`.
+ * Gift card application requires a dedicated gift card module or custom workflow if enabled.
+ * Retained as placeholder to maintain API signature without inventing unverified business logic.
+ */
+export async function applyGiftCard(_code: string) {
+  // Placeholder: gift card module integration can be implemented when configured.
 }
 
-export async function removeDiscount(code: string) {
-  // const cartId = getCartId()
-  // if (!cartId) return "No cartId cookie found"
-  // try {
-  //   await deleteDiscount(cartId, code)
-  //   revalidateTag("cart")
-  // } catch (error: any) {
-  //   throw error
-  // }
+/**
+ * In Medusa v2, promotion codes are updated or removed via cart update promotion workflows.
+ * Retained as placeholder to maintain API signature without inventing unverified business logic.
+ */
+export async function removeDiscount(_code: string) {
+  // Placeholder: discount removal is handled via promo_codes array update in updateCart.
 }
 
+/**
+ * Placeholder for gift card removal when custom gift card module is configured.
+ */
 export async function removeGiftCard(
-  codeToRemove: string,
-  giftCards: any[]
-  // giftCards: GiftCard[]
+  _codeToRemove: string,
+  _giftCards: unknown[]
 ) {
-  //   const cartId = getCartId()
-  //   if (!cartId) return "No cartId cookie found"
-  //   try {
-  //     await updateCart(cartId, {
-  //       gift_cards: [...giftCards]
-  //         .filter((gc) => gc.code !== codeToRemove)
-  //         .map((gc) => ({ code: gc.code })),
-  //     }).then(() => {
-  //       revalidateTag("cart")
-  //     })
-  //   } catch (error: any) {
-  //     throw error
-  //   }
+  // Placeholder: custom gift card workflow.
 }
 
 export async function submitPromotionForm(
-  currentState: unknown,
+  _currentState: unknown,
   formData: FormData
 ) {
   const code = formData.get("code") as string
   try {
     await applyPromotions([code])
-  } catch (e: any) {
-    return e.message
+  } catch (e: unknown) {
+    return e instanceof Error ? e.message : "Error applying promotion"
   }
 }
 
 // TODO: Pass a POJO instead of a form entity here
-export async function setAddresses(currentState: unknown, formData: FormData) {
+export async function setAddresses(_currentState: unknown, formData: FormData) {
   try {
     if (!formData) {
       throw new Error("No form data found when setting addresses")
     }
-    const cartId = getCartId()
+    const cartId = await getCartId()
     if (!cartId) {
       throw new Error("No existing cart found when setting addresses")
     }
 
-    const data = {
+    const data: HttpTypes.StoreUpdateCart = {
       shipping_address: {
-        first_name: formData.get("shipping_address.first_name"),
-        last_name: formData.get("shipping_address.last_name"),
-        address_1: formData.get("shipping_address.address_1"),
+        first_name: formData.get("shipping_address.first_name") as string,
+        last_name: formData.get("shipping_address.last_name") as string,
+        address_1: formData.get("shipping_address.address_1") as string,
         address_2: "",
-        company: formData.get("shipping_address.company"),
-        postal_code: formData.get("shipping_address.postal_code"),
-        city: formData.get("shipping_address.city"),
-        country_code: formData.get("shipping_address.country_code"),
-        province: formData.get("shipping_address.province"),
-        phone: formData.get("shipping_address.phone"),
+        company: (formData.get("shipping_address.company") as string) || undefined,
+        postal_code: formData.get("shipping_address.postal_code") as string,
+        city: formData.get("shipping_address.city") as string,
+        country_code: formData.get("shipping_address.country_code") as string,
+        province: (formData.get("shipping_address.province") as string) || undefined,
+        phone: (formData.get("shipping_address.phone") as string) || undefined,
       },
-      email: formData.get("email"),
-    } as any
+      email: formData.get("email") as string,
+    }
 
     const sameAsBilling = formData.get("same_as_billing")
     if (sameAsBilling === "on") data.billing_address = data.shipping_address
 
     if (sameAsBilling !== "on")
       data.billing_address = {
-        first_name: formData.get("billing_address.first_name"),
-        last_name: formData.get("billing_address.last_name"),
-        address_1: formData.get("billing_address.address_1"),
+        first_name: formData.get("billing_address.first_name") as string,
+        last_name: formData.get("billing_address.last_name") as string,
+        address_1: formData.get("billing_address.address_1") as string,
         address_2: "",
-        company: formData.get("billing_address.company"),
-        postal_code: formData.get("billing_address.postal_code"),
-        city: formData.get("billing_address.city"),
-        country_code: formData.get("billing_address.country_code"),
-        province: formData.get("billing_address.province"),
-        phone: formData.get("billing_address.phone"),
+        company: (formData.get("billing_address.company") as string) || undefined,
+        postal_code: formData.get("billing_address.postal_code") as string,
+        city: formData.get("billing_address.city") as string,
+        country_code: formData.get("billing_address.country_code") as string,
+        province: (formData.get("billing_address.province") as string) || undefined,
+        phone: (formData.get("billing_address.phone") as string) || undefined,
       }
     await updateCart(data)
-  } catch (e: any) {
-    return e.message
+  } catch (e: unknown) {
+    return e instanceof Error ? e.message : "Error setting addresses"
   }
 
   redirect(
@@ -418,7 +402,7 @@ export async function placeOrder(cartId?: string) {
     const orderCacheTag = await getCacheTag("orders")
     revalidateTag(orderCacheTag, { expire: 0 })
 
-    removeCartId()
+    await removeCartId()
     redirect(`/${countryCode}/order/${cartRes?.order.id}/confirmed`)
   }
 

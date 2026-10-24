@@ -38,6 +38,9 @@ yarn-error.log*
 **/.env.development.local
 **/.env.test.local
 **/.env.production.local
+.env.docker
+.env.docker.*
+!.env.docker.example
 
 # Turbo
 .turbo

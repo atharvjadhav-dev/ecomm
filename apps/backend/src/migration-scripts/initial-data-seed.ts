@@ -65,6 +65,24 @@ export default async function initial_data_seed({
     },
   });
 
+  if (process.env.STOREFRONT_PUBLISHABLE_KEY) {
+    try {
+      const pgConnection = container.resolve(
+        ContainerRegistrationKeys.PG_CONNECTION
+      );
+      await pgConnection("api_key")
+        .where({ id: publishableApiKey.id })
+        .update({ token: process.env.STOREFRONT_PUBLISHABLE_KEY });
+      logger.info(
+        `Configured publishable API key token matching STOREFRONT_PUBLISHABLE_KEY: ${process.env.STOREFRONT_PUBLISHABLE_KEY}`
+      );
+    } catch (err) {
+      logger.warn(`Could not set custom publishable API key token: ${err}`);
+    }
+  } else {
+    logger.info(`Seeded publishable API key token: ${publishableApiKey.token}`);
+  }
+
   await linkSalesChannelsToApiKeyWorkflow(container).run({
     input: {
       id: publishableApiKey.id,

@@ -1,0 +1,11 @@
+node_modules
+.medusa
+dist
+build
+.cache
+coverage
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
