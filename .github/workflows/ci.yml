@@ -1,0 +1,91 @@
+name: CI
+
+# Continuous Integration only: no deployment, no registry pushes, no cloud credentials.
+# See docs/ci.md for how to run every gate locally and how to debug a failed run.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: jobs can only read repository contents.
+permissions:
+  contents: read
+
+# Cancel superseded runs on pull requests; never cancel runs on main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  verify:
+    name: Install, typecheck, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Third-party actions are pinned to full commit SHAs (tag shown in the comment).
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # Node 22 matches the Dockerfiles (node:22-slim) and satisfies engines ">=22.22.0".
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Show toolchain versions
+        run: |
+          node --version
+          npm --version
+
+      # Gate 1: fails if package.json and package-lock.json are out of sync.
+      - name: "Gate 1: Install dependencies (npm ci)"
+        run: npm ci --no-audit --no-fund
+
+      # --incremental false: never read or write the tracked tsconfig.tsbuildinfo.
+      - name: "Gate 2: Backend TypeScript"
+        working-directory: apps/backend
+        run: npx tsc --noEmit --incremental false
+
+      - name: "Gate 3: Storefront TypeScript"
+        working-directory: apps/storefront
+        run: npx tsc --noEmit --incremental false
+
+      - name: "Gate 4: Monorepo lint"
+        run: npx turbo lint
+
+      # --force bypasses the Turborepo cache so tests always execute.
+      - name: "Gate 5: Unit tests (backend + storefront)"
+        run: npx turbo test --force
+
+  docker-build:
+    name: "Gate 6: Docker build (${{ matrix.service }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, storefront]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # .env.docker.example contains placeholders only. No real secrets are needed to build.
+      - name: Validate Compose file
+        run: docker compose --env-file .env.docker.example config --quiet
+
+      - name: Build ${{ matrix.service }} image
+        run: docker compose --env-file .env.docker.example build ${{ matrix.service }}
