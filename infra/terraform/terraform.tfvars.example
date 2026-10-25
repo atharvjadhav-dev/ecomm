@@ -1,0 +1,25 @@
+# ==============================================================================
+# Example Terraform Variables (SAFE TO COMMIT — PLACEHOLDERS ONLY)
+# Copy to terraform.tfvars (which is gitignored) and customize for your account.
+# ==============================================================================
+
+aws_region                  = "us-east-1"
+project_name                = "medusa-ecomm"
+environment                 = "production"
+domain_name                 = "ecom.example.com"
+enable_https                = false
+github_repository           = "your-github-username/your-repo-name"
+github_branch               = "main"
+create_github_oidc_provider = true
+
+# Exactly 1 Fargate task per service initially (no autoscaling)
+backend_desired_count    = 1
+storefront_desired_count = 1
+
+# Database & Cache sizing
+db_instance_class = "db.t4g.micro"
+redis_node_type   = "cache.t4g.micro"
+
+# Storefront publishable API key (synced automatically on first DB seed)
+storefront_publishable_key = "pk_replace_with_medusa_publishable_key"
+default_region_code        = "dk"

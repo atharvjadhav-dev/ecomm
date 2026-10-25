@@ -62,3 +62,21 @@ Thumbs.db
 # Kubernetes secret manifests (keep .example.yaml templates)
 k8s/*secret*.yaml
 !k8s/*.example.yaml
+
+# Terraform state and local variable files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
