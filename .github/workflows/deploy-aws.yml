@@ -1,0 +1,202 @@
+name: Deploy to AWS ECS
+
+# Continuous Deployment pipeline for AWS ECS Fargate using GitHub OIDC.
+# Runs test gates first, then builds/pushes images to Amazon ECR and updates ECS task definitions.
+# See docs/aws-ecs.md for required GitHub repository variables and secrets.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-aws-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  test:
+    name: Verify (Install, Typecheck, Lint, Test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Backend TypeScript check
+        working-directory: apps/backend
+        run: npx tsc --noEmit --incremental false
+
+      - name: Storefront TypeScript check
+        working-directory: apps/storefront
+        run: npx tsc --noEmit --incremental false
+
+      - name: Monorepo lint
+        run: npx turbo lint
+
+      - name: Unit tests
+        run: npx turbo test --force
+
+  deploy:
+    name: Build, Push to ECR & Deploy to ECS Fargate
+    needs: [test]
+    if: ${{ vars.AWS_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY || 'ecomm-medusa-prod/backend' }}
+      ECR_STOREFRONT_REPOSITORY: ${{ vars.ECR_STOREFRONT_REPOSITORY || 'ecomm-medusa-prod/storefront' }}
+      ECS_CLUSTER_NAME: ${{ vars.ECS_CLUSTER_NAME || 'ecomm-medusa-prod-cluster' }}
+      ECS_BACKEND_SERVICE: ${{ vars.ECS_BACKEND_SERVICE || 'ecomm-medusa-prod-backend' }}
+      ECS_STOREFRONT_SERVICE: ${{ vars.ECS_STOREFRONT_SERVICE || 'ecomm-medusa-prod-storefront' }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || 'https://ecom.example.com' }}
+      NEXT_PUBLIC_DEFAULT_REGION: ${{ vars.NEXT_PUBLIC_DEFAULT_REGION || 'dk' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Build and push Medusa backend image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          BACKEND_IMAGE="${ECR_REGISTRY}/${ECR_BACKEND_REPOSITORY}"
+          docker build -f apps/backend/Dockerfile \
+            -t "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+            -t "${BACKEND_IMAGE}:latest" \
+            .
+          docker push "${BACKEND_IMAGE}:${IMAGE_TAG}"
+          docker push "${BACKEND_IMAGE}:latest"
+
+      - name: Build and push Next.js storefront image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "${NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY}" ]; then
+            echo "Error: NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY secret must be set in GitHub Actions."
+            exit 1
+          fi
+          STOREFRONT_IMAGE="${ECR_REGISTRY}/${ECR_STOREFRONT_REPOSITORY}"
+          docker build -f apps/storefront/Dockerfile \
+            --build-arg NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY="${NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY}" \
+            --build-arg NEXT_PUBLIC_MEDUSA_BACKEND_URL="${PUBLIC_APP_URL}" \
+            --build-arg NEXT_PUBLIC_BASE_URL="${PUBLIC_APP_URL}" \
+            --build-arg NEXT_PUBLIC_DEFAULT_REGION="${NEXT_PUBLIC_DEFAULT_REGION}" \
+            -t "${STOREFRONT_IMAGE}:${IMAGE_TAG}" \
+            -t "${STOREFRONT_IMAGE}:latest" \
+            .
+          docker push "${STOREFRONT_IMAGE}:${IMAGE_TAG}"
+          docker push "${STOREFRONT_IMAGE}:latest"
+
+      - name: Update Backend ECS Task Definition and Service
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          BACKEND_IMAGE="${ECR_REGISTRY}/${ECR_BACKEND_REPOSITORY}:${IMAGE_TAG}"
+          CURRENT_TD_ARN=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_BACKEND_SERVICE}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition "${CURRENT_TD_ARN}" \
+            --query "taskDefinition" \
+            | jq --arg IMAGE "${BACKEND_IMAGE}" '
+              .containerDefinitions[0].image = $IMAGE |
+              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+            ' > backend-taskdef.json
+
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://backend-taskdef.json \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
+          rm -f backend-taskdef.json
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --service "${ECS_BACKEND_SERVICE}" \
+            --task-definition "${NEW_TD_ARN}" \
+            --force-new-deployment > /dev/null
+
+          echo "Waiting for backend ECS service (${ECS_BACKEND_SERVICE}) to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_BACKEND_SERVICE}"
+
+      - name: Update Storefront ECS Task Definition and Service
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          STOREFRONT_IMAGE="${ECR_REGISTRY}/${ECR_STOREFRONT_REPOSITORY}:${IMAGE_TAG}"
+          CURRENT_TD_ARN=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_STOREFRONT_SERVICE}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition "${CURRENT_TD_ARN}" \
+            --query "taskDefinition" \
+            | jq --arg IMAGE "${STOREFRONT_IMAGE}" '
+              .containerDefinitions[0].image = $IMAGE |
+              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+            ' > storefront-taskdef.json
+
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://storefront-taskdef.json \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
+          rm -f storefront-taskdef.json
+
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --service "${ECS_STOREFRONT_SERVICE}" \
+            --task-definition "${NEW_TD_ARN}" \
+            --force-new-deployment > /dev/null
+
+          echo "Waiting for storefront ECS service (${ECS_STOREFRONT_SERVICE}) to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER_NAME}" \
+            --services "${ECS_STOREFRONT_SERVICE}"
